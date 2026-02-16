@@ -69,7 +69,10 @@ class PackageController extends Controller
 
     public function show(string $studioId, string $id): JsonResponse
     {
-        $package = Package::where('studio_id', $studioId)->where('id', $id)->first();
+        $package = Package::with('addons')
+            ->where('studio_id', $studioId)
+            ->where('id', $id)
+            ->first();
 
         if (! $package) {
             return response()->json([
