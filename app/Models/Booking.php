@@ -27,9 +27,12 @@ class Booking extends Model
         'invoice_number',
         'customer_id',
         'package_id',
+        'voucher_id',
         'booking_date',
         'start_time',
         'end_time',
+        'subtotal_price',
+        'discount_amount',
         'total_price',
         'status',
         'payment_status',
@@ -41,6 +44,9 @@ class Booking extends Model
 
     protected $casts = [
         'booking_date' => 'date',
+        'subtotal_price' => 'float',
+        'discount_amount' => 'float',
+        'total_price' => 'float',
         'payment_expired_at' => 'datetime',
     ];
 
@@ -52,6 +58,11 @@ class Booking extends Model
     public function package(): BelongsTo
     {
         return $this->belongsTo(Package::class);
+    }
+
+    public function voucher(): BelongsTo
+    {
+        return $this->belongsTo(Voucher::class);
     }
 
     public function bookingAddons(): HasMany

@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\AddonController;
 use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\PackageController;
 use App\Http\Controllers\Api\StudioController;
+use App\Http\Controllers\Api\VoucherController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
@@ -37,9 +38,11 @@ Route::get('/studios/{studioId}/packages/{packageId}/available-slots', [BookingC
 Route::post('/studios/{studioId}/packages/{packageId}/bookings', [BookingController::class, 'store']);
 Route::get('/bookings/statuses', [BookingController::class, 'statuses']);
 Route::get('/bookings/{invoiceNumber}', [BookingController::class, 'show']);
+Route::get('/vouchers/active', [VoucherController::class, 'activeList']);
 
 Route::middleware(['api.token', 'admin'])->prefix('admin')->group(function () {
     Route::get('/dashboard', [BookingController::class, 'adminDashboard']);
+    Route::post('/vouchers', [VoucherController::class, 'store']);
     Route::get('/bookings', [BookingController::class, 'adminIndex']);
     Route::get('/bookings/{id}', [BookingController::class, 'adminShow']);
     Route::post('/bookings/{id}/status', [BookingController::class, 'adminUpdateStatus']);

@@ -8,6 +8,7 @@ use App\Models\Booking;
 use App\Models\BookingAddon;
 use App\Models\Customer;
 use App\Models\Package;
+use App\Models\Voucher;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -147,6 +148,7 @@ class BookingController extends Controller
             'customer',
             'package.studio',
             'bookingAddons.addon',
+            'voucher',
         ]);
 
         if (! empty($validated['status'])) {
@@ -215,7 +217,7 @@ class BookingController extends Controller
 
     public function adminShow(string $id): JsonResponse
     {
-        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon'])
+        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon', 'voucher'])
             ->where('id', $id)
             ->first();
 
@@ -231,7 +233,7 @@ class BookingController extends Controller
 
     public function adminUpdateStatus(Request $request, string $id): JsonResponse
     {
-        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon'])
+        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon', 'voucher'])
             ->where('id', $id)
             ->first();
 
@@ -281,13 +283,13 @@ class BookingController extends Controller
 
         return response()->json([
             'message' => 'Booking status updated',
-            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon']),
+            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon', 'voucher']),
         ]);
     }
 
     public function adminReschedule(Request $request, string $id): JsonResponse
     {
-        $booking = Booking::with(['package.studio', 'customer', 'bookingAddons.addon'])
+        $booking = Booking::with(['package.studio', 'customer', 'bookingAddons.addon', 'voucher'])
             ->where('id', $id)
             ->first();
 
@@ -345,7 +347,7 @@ class BookingController extends Controller
 
         return response()->json([
             'message' => 'Booking rescheduled',
-            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon']),
+            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon', 'voucher']),
         ]);
     }
 
@@ -361,6 +363,7 @@ class BookingController extends Controller
             'customer.name' => ['required', 'string', 'max:255'],
             'customer.phone' => ['required', 'string', 'max:30'],
             'customer.email' => ['required', 'email', 'max:255'],
+            'voucher_code' => ['nullable', 'string', 'max:50'],
             'addons' => ['nullable'],
             'preferences.background' => ['nullable', 'string', 'max:100'],
             'preferences.allow_social_media_upload' => ['nullable'],
@@ -377,6 +380,9 @@ class BookingController extends Controller
         $normalizedAddons = $this->normalizeAddons($request->input('addons', []));
         $slots = collect($this->buildSlots($package, $validated['booking_date']));
         $selectedSlot = $slots->firstWhere('start_time', $startTime);
+        $voucherCode = isset($validated['voucher_code'])
+            ? strtoupper(trim((string) $validated['voucher_code']))
+            : null;
 
         if (! $selectedSlot) {
             return response()->json([
@@ -391,7 +397,7 @@ class BookingController extends Controller
         }
 
         $pricing = $this->calculateAddonPricing($package, $normalizedAddons);
-        $totalPrice = (float) $package->price + $pricing['addons_total'];
+        $subtotalPrice = (float) $package->price + $pricing['addons_total'];
         $endTime = Carbon::createFromFormat('H:i', $startTime)
             ->addMinutes((int) $package->duration_minutes)
             ->format('H:i:s');
@@ -404,7 +410,34 @@ class BookingController extends Controller
         $notesPayload = array_filter($notesPayload, fn ($value) => $value !== null && $value !== []);
         $encodedNotes = empty($notesPayload) ? null : json_encode($notesPayload, JSON_UNESCAPED_UNICODE);
 
-        $booking = DB::transaction(function () use ($validated, $package, $pricing, $totalPrice, $encodedNotes, $endTime, $startTime) {
+        $booking = DB::transaction(function () use ($validated, $package, $pricing, $subtotalPrice, $encodedNotes, $endTime, $startTime, $voucherCode) {
+            $voucher = null;
+            $discountAmount = 0.0;
+
+            if (! empty($voucherCode)) {
+                $voucher = Voucher::whereRaw('UPPER(code) = ?', [$voucherCode])
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $voucher) {
+                    throw ValidationException::withMessages([
+                        'voucher_code' => ['Voucher not found'],
+                    ]);
+                }
+
+                $discountAmount = $this->calculateVoucherDiscount($voucher, $subtotalPrice);
+
+                if ($voucher->usage_limit !== null && $voucher->used_count >= $voucher->usage_limit) {
+                    throw ValidationException::withMessages([
+                        'voucher_code' => ['Voucher quota has been reached'],
+                    ]);
+                }
+
+                $voucher->increment('used_count');
+            }
+
+            $totalPrice = max($subtotalPrice - $discountAmount, 0);
+
             $customer = Customer::updateOrCreate(
                 ['phone' => $validated['customer']['phone']],
                 [
@@ -419,9 +452,12 @@ class BookingController extends Controller
                 'invoice_number' => $invoiceNumber,
                 'customer_id' => $customer->id,
                 'package_id' => $package->id,
+                'voucher_id' => $voucher?->id,
                 'booking_date' => $validated['booking_date'],
                 'start_time' => Carbon::createFromFormat('H:i', $startTime)->format('H:i:s'),
                 'end_time' => $endTime,
+                'subtotal_price' => $subtotalPrice,
+                'discount_amount' => $discountAmount,
                 'total_price' => $totalPrice,
                 'status' => 'pending',
                 'payment_status' => 'unpaid',
@@ -443,7 +479,7 @@ class BookingController extends Controller
             return $booking;
         });
 
-        $booking->load(['customer', 'package', 'bookingAddons.addon']);
+        $booking->load(['customer', 'package', 'bookingAddons.addon', 'voucher']);
 
         return response()->json([
             'message' => 'Booking created',
@@ -453,7 +489,7 @@ class BookingController extends Controller
 
     public function show(string $invoiceNumber): JsonResponse
     {
-        $booking = Booking::with(['customer', 'package', 'bookingAddons.addon'])
+        $booking = Booking::with(['customer', 'package', 'bookingAddons.addon', 'voucher'])
             ->where('invoice_number', $invoiceNumber)
             ->first();
 
@@ -646,5 +682,42 @@ class BookingController extends Controller
         } while (Booking::where('invoice_number', $invoice)->exists());
 
         return $invoice;
+    }
+
+    private function calculateVoucherDiscount(Voucher $voucher, float $subtotalPrice): float
+    {
+        if (! $voucher->is_active) {
+            throw ValidationException::withMessages([
+                'voucher_code' => ['Voucher is inactive'],
+            ]);
+        }
+
+        if ($voucher->starts_at !== null && now()->lt($voucher->starts_at)) {
+            throw ValidationException::withMessages([
+                'voucher_code' => ['Voucher is not active yet'],
+            ]);
+        }
+
+        if ($voucher->ends_at !== null && now()->gt($voucher->ends_at)) {
+            throw ValidationException::withMessages([
+                'voucher_code' => ['Voucher has expired'],
+            ]);
+        }
+
+        if ($voucher->min_total !== null && $subtotalPrice < (float) $voucher->min_total) {
+            throw ValidationException::withMessages([
+                'voucher_code' => ['Minimum booking total for this voucher is not reached'],
+            ]);
+        }
+
+        $discount = $voucher->discount_type === Voucher::TYPE_PERCENT
+            ? ($subtotalPrice * ((float) $voucher->discount_value / 100))
+            : (float) $voucher->discount_value;
+
+        if ($voucher->max_discount !== null) {
+            $discount = min($discount, (float) $voucher->max_discount);
+        }
+
+        return min($discount, $subtotalPrice);
     }
 }
