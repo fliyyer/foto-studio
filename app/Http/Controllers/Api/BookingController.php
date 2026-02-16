@@ -518,6 +518,8 @@ class BookingController extends Controller
         $slotDuration = 30;
         $durationMinutes = max((int) $package->duration_minutes, 1);
         $maxBookingPerSlot = max((int) $package->max_booking_per_slot, 1);
+        $isBookingDateToday = Carbon::parse($bookingDate)->isToday();
+        $currentTime = now();
 
         $openTime = Carbon::parse((string) $studio->open_time);
         $closeTime = Carbon::parse((string) $studio->close_time);
@@ -539,13 +541,16 @@ class BookingController extends Controller
                 ->count();
 
             $remaining = max($maxBookingPerSlot - $bookedCount, 0);
+            $slotDateTime = Carbon::createFromFormat('Y-m-d H:i', $bookingDate . ' ' . $start);
+            $isPastSlot = $isBookingDateToday && $slotDateTime->lte($currentTime);
+            $isAvailable = $remaining > 0 && ! $isPastSlot;
 
             $slots[] = [
                 'start_time' => $start,
                 'end_time' => $end,
                 'booked_count' => $bookedCount,
-                'remaining_quota' => $remaining,
-                'is_available' => $remaining > 0,
+                'remaining_quota' => $isAvailable ? $remaining : 0,
+                'is_available' => $isAvailable,
             ];
 
             $cursor->addMinutes($slotDuration);
