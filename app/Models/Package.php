@@ -35,4 +35,9 @@ class Package extends Model
     {
         return $this->hasMany(Addon::class);
     }
+
+    public function bookings(): HasMany
+    {
+        return $this->hasMany(Booking::class);
+    }
 }

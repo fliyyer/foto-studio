@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\AddonController;
+use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\PackageController;
 use App\Http\Controllers\Api\StudioController;
 use Illuminate\Support\Facades\Route;
@@ -31,3 +32,7 @@ Route::get('/studios/{studioId}/packages', [PackageController::class, 'index']);
 Route::get('/studios/{studioId}/packages/{id}', [PackageController::class, 'show']);
 Route::get('/studios/{studioId}/packages/{packageId}/addons', [AddonController::class, 'index']);
 Route::get('/studios/{studioId}/packages/{packageId}/addons/{id}', [AddonController::class, 'show']);
+
+Route::get('/studios/{studioId}/packages/{packageId}/available-slots', [BookingController::class, 'availableSlots']);
+Route::post('/studios/{studioId}/packages/{packageId}/bookings', [BookingController::class, 'store']);
+Route::get('/bookings/{invoiceNumber}', [BookingController::class, 'show']);
