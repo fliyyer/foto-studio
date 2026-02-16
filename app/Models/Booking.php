@@ -8,6 +8,21 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Booking extends Model
 {
+    public const STATUSES = [
+        'pending',
+        'confirmed',
+        'completed',
+        'cancelled',
+        'expired',
+    ];
+
+    public const PAYMENT_STATUSES = [
+        'unpaid',
+        'paid',
+        'failed',
+        'refunded',
+    ];
+
     protected $fillable = [
         'invoice_number',
         'customer_id',
@@ -42,5 +57,15 @@ class Booking extends Model
     public function bookingAddons(): HasMany
     {
         return $this->hasMany(BookingAddon::class);
+    }
+
+    public static function bookingStatuses(): array
+    {
+        return self::STATUSES;
+    }
+
+    public static function paymentStatuses(): array
+    {
+        return self::PAYMENT_STATUSES;
     }
 }

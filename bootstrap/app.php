@@ -4,6 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\ApiTokenMiddleware;
+use App\Http\Middleware\AdminRoleMiddleware;
 use App\Http\Middleware\ForceJsonResponse;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -16,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'api.token' => ApiTokenMiddleware::class,
+            'admin' => AdminRoleMiddleware::class,
         ]);
 
         $middleware->appendToGroup('api', ForceJsonResponse::class);

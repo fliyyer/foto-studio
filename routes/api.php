@@ -35,4 +35,12 @@ Route::get('/studios/{studioId}/packages/{packageId}/addons/{id}', [AddonControl
 
 Route::get('/studios/{studioId}/packages/{packageId}/available-slots', [BookingController::class, 'availableSlots']);
 Route::post('/studios/{studioId}/packages/{packageId}/bookings', [BookingController::class, 'store']);
+Route::get('/bookings/statuses', [BookingController::class, 'statuses']);
 Route::get('/bookings/{invoiceNumber}', [BookingController::class, 'show']);
+
+Route::middleware(['api.token', 'admin'])->prefix('admin')->group(function () {
+    Route::get('/bookings', [BookingController::class, 'adminIndex']);
+    Route::get('/bookings/{id}', [BookingController::class, 'adminShow']);
+    Route::post('/bookings/{id}/status', [BookingController::class, 'adminUpdateStatus']);
+    Route::post('/bookings/{id}/reschedule', [BookingController::class, 'adminReschedule']);
+});

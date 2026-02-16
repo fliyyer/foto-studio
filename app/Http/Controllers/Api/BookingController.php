@@ -17,6 +17,41 @@ use Illuminate\Validation\ValidationException;
 
 class BookingController extends Controller
 {
+    public function statuses(): JsonResponse
+    {
+        $statusCounts = Booking::query()
+            ->selectRaw('status, COUNT(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        $paymentStatusCounts = Booking::query()
+            ->selectRaw('payment_status, COUNT(*) as total')
+            ->groupBy('payment_status')
+            ->pluck('total', 'payment_status');
+
+        $bookingStatuses = collect(Booking::bookingStatuses())
+            ->map(fn ($status) => [
+                'status' => $status,
+                'total' => (int) ($statusCounts[$status] ?? 0),
+            ])
+            ->values();
+
+        $paymentStatuses = collect(Booking::paymentStatuses())
+            ->map(fn ($status) => [
+                'status' => $status,
+                'total' => (int) ($paymentStatusCounts[$status] ?? 0),
+            ])
+            ->values();
+
+        return response()->json([
+            'message' => 'Booking statuses',
+            'data' => [
+                'booking_statuses' => $bookingStatuses,
+                'payment_statuses' => $paymentStatuses,
+            ],
+        ]);
+    }
+
     public function availableSlots(Request $request, string $studioId, string $packageId): JsonResponse
     {
         $validated = $request->validate([
@@ -38,6 +73,240 @@ class BookingController extends Controller
                 'max_booking_per_slot' => $package->max_booking_per_slot,
                 'slots' => $slots,
             ],
+        ]);
+    }
+
+    public function adminIndex(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'status' => ['nullable', 'string'],
+            'payment_status' => ['nullable', 'string'],
+            'search' => ['nullable', 'string', 'max:100'],
+            'booking_date' => ['nullable', 'date_format:Y-m-d'],
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d'],
+            'studio_id' => ['nullable', 'integer', 'min:1'],
+            'package_id' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'sort_by' => ['nullable', 'in:created_at,booking_date,total_price,status,payment_status'],
+            'sort_dir' => ['nullable', 'in:asc,desc'],
+        ]);
+
+        if (! empty($validated['status']) && ! in_array($validated['status'], Booking::bookingStatuses(), true)) {
+            throw ValidationException::withMessages([
+                'status' => ['Invalid booking status'],
+            ]);
+        }
+
+        if (! empty($validated['payment_status']) && ! in_array($validated['payment_status'], Booking::paymentStatuses(), true)) {
+            throw ValidationException::withMessages([
+                'payment_status' => ['Invalid payment status'],
+            ]);
+        }
+
+        $query = Booking::query()->with([
+            'customer',
+            'package.studio',
+            'bookingAddons.addon',
+        ]);
+
+        if (! empty($validated['status'])) {
+            $query->where('status', $validated['status']);
+        }
+
+        if (! empty($validated['payment_status'])) {
+            $query->where('payment_status', $validated['payment_status']);
+        }
+
+        if (! empty($validated['booking_date'])) {
+            $query->whereDate('booking_date', $validated['booking_date']);
+        }
+
+        if (! empty($validated['date_from'])) {
+            $query->whereDate('booking_date', '>=', $validated['date_from']);
+        }
+
+        if (! empty($validated['date_to'])) {
+            $query->whereDate('booking_date', '<=', $validated['date_to']);
+        }
+
+        if (! empty($validated['studio_id'])) {
+            $query->whereHas('package', function ($packageQuery) use ($validated) {
+                $packageQuery->where('studio_id', $validated['studio_id']);
+            });
+        }
+
+        if (! empty($validated['package_id'])) {
+            $query->where('package_id', $validated['package_id']);
+        }
+
+        if (! empty($validated['search'])) {
+            $search = trim($validated['search']);
+
+            $query->where(function ($searchQuery) use ($search) {
+                $searchQuery->where('invoice_number', 'like', '%' . $search . '%')
+                    ->orWhereHas('customer', function ($customerQuery) use ($search) {
+                        $customerQuery->where('name', 'like', '%' . $search . '%')
+                            ->orWhere('phone', 'like', '%' . $search . '%')
+                            ->orWhere('email', 'like', '%' . $search . '%');
+                    });
+            });
+        }
+
+        $sortBy = $validated['sort_by'] ?? 'created_at';
+        $sortDir = $validated['sort_dir'] ?? 'desc';
+        $perPage = (int) ($validated['per_page'] ?? 15);
+
+        $bookings = $query
+            ->orderBy($sortBy, $sortDir)
+            ->paginate($perPage)
+            ->withQueryString();
+
+        return response()->json([
+            'message' => 'Booking list',
+            'data' => $bookings->items(),
+            'meta' => [
+                'current_page' => $bookings->currentPage(),
+                'per_page' => $bookings->perPage(),
+                'total' => $bookings->total(),
+                'last_page' => $bookings->lastPage(),
+            ],
+        ]);
+    }
+
+    public function adminShow(string $id): JsonResponse
+    {
+        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon'])
+            ->where('id', $id)
+            ->first();
+
+        if (! $booking) {
+            return response()->json(['message' => 'Booking not found'], 404);
+        }
+
+        return response()->json([
+            'message' => 'Booking detail',
+            'data' => $booking,
+        ]);
+    }
+
+    public function adminUpdateStatus(Request $request, string $id): JsonResponse
+    {
+        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon'])
+            ->where('id', $id)
+            ->first();
+
+        if (! $booking) {
+            return response()->json(['message' => 'Booking not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'status' => ['required', 'string'],
+            'payment_status' => ['nullable', 'string'],
+            'payment_method' => ['nullable', 'string', 'max:100'],
+            'payment_reference' => ['nullable', 'string', 'max:255'],
+            'notes' => ['nullable', 'string'],
+        ]);
+
+        if (! in_array($validated['status'], Booking::bookingStatuses(), true)) {
+            throw ValidationException::withMessages([
+                'status' => ['Invalid booking status'],
+            ]);
+        }
+
+        if (! empty($validated['payment_status']) && ! in_array($validated['payment_status'], Booking::paymentStatuses(), true)) {
+            throw ValidationException::withMessages([
+                'payment_status' => ['Invalid payment status'],
+            ]);
+        }
+
+        $booking->status = $validated['status'];
+
+        if (array_key_exists('payment_status', $validated) && $validated['payment_status'] !== null) {
+            $booking->payment_status = $validated['payment_status'];
+        }
+
+        if (array_key_exists('payment_method', $validated) && $validated['payment_method'] !== null) {
+            $booking->payment_method = $validated['payment_method'];
+        }
+
+        if (array_key_exists('payment_reference', $validated)) {
+            $booking->payment_reference = $validated['payment_reference'];
+        }
+
+        if (array_key_exists('notes', $validated) && $validated['notes'] !== null) {
+            $booking->notes = $validated['notes'];
+        }
+
+        $booking->save();
+
+        return response()->json([
+            'message' => 'Booking status updated',
+            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon']),
+        ]);
+    }
+
+    public function adminReschedule(Request $request, string $id): JsonResponse
+    {
+        $booking = Booking::with(['package.studio', 'customer', 'bookingAddons.addon'])
+            ->where('id', $id)
+            ->first();
+
+        if (! $booking) {
+            return response()->json(['message' => 'Booking not found'], 404);
+        }
+
+        if (in_array($booking->status, ['completed', 'cancelled', 'expired'], true)) {
+            return response()->json([
+                'message' => 'This booking cannot be rescheduled',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'booking_date' => ['required', 'date_format:Y-m-d'],
+            'start_time' => ['required', 'string'],
+            'notes' => ['nullable', 'string'],
+        ]);
+
+        $startTime = $this->normalizeTime($validated['start_time']);
+        if (! $startTime) {
+            return response()->json([
+                'message' => 'Invalid start_time format. Use HH:mm or HH.mm',
+            ], 422);
+        }
+
+        $slots = collect($this->buildSlots($booking->package, $validated['booking_date'], $booking->id));
+        $selectedSlot = $slots->firstWhere('start_time', $startTime);
+
+        if (! $selectedSlot) {
+            return response()->json([
+                'message' => 'Selected time is not available in this package schedule',
+            ], 422);
+        }
+
+        if (! $selectedSlot['is_available']) {
+            return response()->json([
+                'message' => 'Selected time slot is full',
+            ], 422);
+        }
+
+        $endTime = Carbon::createFromFormat('H:i', $startTime)
+            ->addMinutes((int) $booking->package->duration_minutes)
+            ->format('H:i:s');
+
+        $booking->booking_date = $validated['booking_date'];
+        $booking->start_time = Carbon::createFromFormat('H:i', $startTime)->format('H:i:s');
+        $booking->end_time = $endTime;
+
+        if (! empty($validated['notes'])) {
+            $booking->notes = $validated['notes'];
+        }
+
+        $booking->save();
+
+        return response()->json([
+            'message' => 'Booking rescheduled',
+            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon']),
         ]);
     }
 
@@ -168,7 +437,7 @@ class BookingController extends Controller
             ->first();
     }
 
-    private function buildSlots(Package $package, string $bookingDate): array
+    private function buildSlots(Package $package, string $bookingDate, ?int $excludeBookingId = null): array
     {
         $studio = $package->studio;
         $slotDuration = 30;
@@ -189,6 +458,9 @@ class BookingController extends Controller
                 ->whereDate('booking_date', $bookingDate)
                 ->whereTime('start_time', $start)
                 ->whereNotIn('status', ['cancelled', 'expired'])
+                ->when($excludeBookingId, function ($query) use ($excludeBookingId) {
+                    $query->where('id', '!=', $excludeBookingId);
+                })
                 ->count();
 
             $remaining = max($maxBookingPerSlot - $bookedCount, 0);
