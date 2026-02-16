@@ -39,6 +39,7 @@ Route::get('/bookings/statuses', [BookingController::class, 'statuses']);
 Route::get('/bookings/{invoiceNumber}', [BookingController::class, 'show']);
 
 Route::middleware(['api.token', 'admin'])->prefix('admin')->group(function () {
+    Route::get('/dashboard', [BookingController::class, 'adminDashboard']);
     Route::get('/bookings', [BookingController::class, 'adminIndex']);
     Route::get('/bookings/{id}', [BookingController::class, 'adminShow']);
     Route::post('/bookings/{id}/status', [BookingController::class, 'adminUpdateStatus']);

@@ -17,6 +17,45 @@ use Illuminate\Validation\ValidationException;
 
 class BookingController extends Controller
 {
+    public function adminDashboard(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'month' => ['nullable', 'integer', 'min:1', 'max:12'],
+            'year' => ['nullable', 'integer', 'min:2000', 'max:2100'],
+        ]);
+
+        $now = now();
+        $month = (int) ($validated['month'] ?? $now->month);
+        $year = (int) ($validated['year'] ?? $now->year);
+
+        $today = $now->toDateString();
+        $startMonth = Carbon::create($year, $month, 1)->startOfMonth();
+        $endMonth = $startMonth->copy()->endOfMonth();
+
+        $totalBookingToday = Booking::whereDate('booking_date', $today)->count();
+        $totalBookingMonth = Booking::whereBetween('booking_date', [$startMonth->toDateString(), $endMonth->toDateString()])->count();
+
+        $totalRevenueToday = (float) Booking::whereDate('booking_date', $today)
+            ->where('payment_status', 'paid')
+            ->sum('total_price');
+
+        $totalRevenueMonth = (float) Booking::whereBetween('booking_date', [$startMonth->toDateString(), $endMonth->toDateString()])
+            ->where('payment_status', 'paid')
+            ->sum('total_price');
+
+        return response()->json([
+            'message' => 'Admin dashboard summary',
+            'data' => [
+                'total_booking_today' => $totalBookingToday,
+                'total_booking_month' => $totalBookingMonth,
+                'total_revenue_today' => $totalRevenueToday,
+                'total_revenue_month' => $totalRevenueMonth,
+                'month' => $month,
+                'year' => $year,
+            ],
+        ]);
+    }
+
     public function statuses(): JsonResponse
     {
         $statusCounts = Booking::query()
