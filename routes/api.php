@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\AddonController;
 use App\Http\Controllers\Api\BookingController;
+use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\PackageController;
 use App\Http\Controllers\Api\StudioController;
 use App\Http\Controllers\Api\VoucherController;
@@ -36,12 +37,16 @@ Route::get('/studios/{studioId}/packages/{packageId}/addons/{id}', [AddonControl
 
 Route::get('/studios/{studioId}/packages/{packageId}/available-slots', [BookingController::class, 'availableSlots']);
 Route::post('/studios/{studioId}/packages/{packageId}/bookings', [BookingController::class, 'store']);
+Route::post('/payments/pakasir/webhook', [PaymentController::class, 'pakasirWebhook']);
 Route::get('/bookings/statuses', [BookingController::class, 'statuses']);
+Route::get('/bookings/{invoiceNumber}/payment-status', [PaymentController::class, 'pollPaymentStatus']);
 Route::get('/bookings/{invoiceNumber}', [BookingController::class, 'show']);
 Route::get('/vouchers/active', [VoucherController::class, 'activeList']);
 
 Route::middleware(['api.token', 'admin'])->prefix('admin')->group(function () {
     Route::get('/dashboard', [BookingController::class, 'adminDashboard']);
+    Route::get('/payments/transaction-detail', [PaymentController::class, 'transactionDetail']);
+    Route::get('/payments/history', [PaymentController::class, 'history']);
     Route::post('/vouchers', [VoucherController::class, 'store']);
     Route::get('/bookings', [BookingController::class, 'adminIndex']);
     Route::get('/bookings/{id}', [BookingController::class, 'adminShow']);

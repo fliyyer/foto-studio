@@ -12,6 +12,7 @@ class Package extends Model
         'studio_id',
         'name',
         'category',
+        'background',
         'thumbnail',
         'price',
         'duration_minutes',
@@ -23,6 +24,7 @@ class Package extends Model
     ];
 
     protected $casts = [
+        'background' => 'array',
         'is_active' => 'boolean',
     ];
 

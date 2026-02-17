@@ -8,16 +8,33 @@ use App\Models\Booking;
 use App\Models\BookingAddon;
 use App\Models\Customer;
 use App\Models\Package;
+use App\Models\Payment;
 use App\Models\Voucher;
+use App\Services\PakasirService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class BookingController extends Controller
 {
+    private const PAKASIR_PAYMENT_METHODS = [
+        'cimb_niaga_va',
+        'bni_va',
+        'qris',
+        'sampoerna_va',
+        'bnc_va',
+        'maybank_va',
+        'permata_va',
+        'atm_bersama_va',
+        'artha_graha_va',
+        'bri_va',
+        'paypal',
+    ];
+
     public function adminDashboard(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -149,6 +166,7 @@ class BookingController extends Controller
             'package.studio',
             'bookingAddons.addon',
             'voucher',
+            'payment',
         ]);
 
         if (! empty($validated['status'])) {
@@ -217,7 +235,7 @@ class BookingController extends Controller
 
     public function adminShow(string $id): JsonResponse
     {
-        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon', 'voucher'])
+        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon', 'voucher', 'payment'])
             ->where('id', $id)
             ->first();
 
@@ -233,7 +251,7 @@ class BookingController extends Controller
 
     public function adminUpdateStatus(Request $request, string $id): JsonResponse
     {
-        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon', 'voucher'])
+        $booking = Booking::with(['customer', 'package.studio', 'bookingAddons.addon', 'voucher', 'payment'])
             ->where('id', $id)
             ->first();
 
@@ -283,13 +301,13 @@ class BookingController extends Controller
 
         return response()->json([
             'message' => 'Booking status updated',
-            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon', 'voucher']),
+            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon', 'voucher', 'payment']),
         ]);
     }
 
     public function adminReschedule(Request $request, string $id): JsonResponse
     {
-        $booking = Booking::with(['package.studio', 'customer', 'bookingAddons.addon', 'voucher'])
+        $booking = Booking::with(['package.studio', 'customer', 'bookingAddons.addon', 'voucher', 'payment'])
             ->where('id', $id)
             ->first();
 
@@ -347,7 +365,7 @@ class BookingController extends Controller
 
         return response()->json([
             'message' => 'Booking rescheduled',
-            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon', 'voucher']),
+            'data' => $booking->fresh(['customer', 'package.studio', 'bookingAddons.addon', 'voucher', 'payment']),
         ]);
     }
 
@@ -364,6 +382,10 @@ class BookingController extends Controller
             'customer.phone' => ['required', 'string', 'max:30'],
             'customer.email' => ['required', 'email', 'max:255'],
             'voucher_code' => ['nullable', 'string', 'max:50'],
+            'payment_mode' => ['nullable', 'in:url,api'],
+            'payment_method' => ['nullable', 'string'],
+            'qris_only' => ['nullable', 'boolean'],
+            'redirect_url' => ['nullable', 'url', 'max:500'],
             'addons' => ['nullable'],
             'preferences.background' => ['nullable', 'string', 'max:100'],
             'preferences.allow_social_media_upload' => ['nullable'],
@@ -383,6 +405,32 @@ class BookingController extends Controller
         $voucherCode = isset($validated['voucher_code'])
             ? strtoupper(trim((string) $validated['voucher_code']))
             : null;
+        $rawPaymentMode = $validated['payment_mode'] ?? null;
+        $rawPaymentMethod = isset($validated['payment_method'])
+            ? strtolower(trim((string) $validated['payment_method']))
+            : null;
+        $paymentMode = $rawPaymentMode !== null ? (string) $rawPaymentMode : 'url';
+
+        if ($rawPaymentMode === null && $rawPaymentMethod !== null && in_array($rawPaymentMethod, self::PAKASIR_PAYMENT_METHODS, true)) {
+            $paymentMode = 'api';
+        }
+
+        $defaultPaymentMethod = $paymentMode === 'api' ? 'qris' : 'url';
+        $paymentMethod = $rawPaymentMethod ?? $defaultPaymentMethod;
+        $qrisOnly = (bool) ($validated['qris_only'] ?? false);
+        $redirectUrl = $validated['redirect_url'] ?? null;
+
+        if ($paymentMode === 'api' && ! in_array($paymentMethod, self::PAKASIR_PAYMENT_METHODS, true)) {
+            throw ValidationException::withMessages([
+                'payment_method' => ['Invalid payment method'],
+            ]);
+        }
+
+        if ($paymentMode === 'api' && $qrisOnly) {
+            throw ValidationException::withMessages([
+                'qris_only' => ['qris_only can only be used with payment_mode=url'],
+            ]);
+        }
 
         if (! $selectedSlot) {
             return response()->json([
@@ -479,17 +527,19 @@ class BookingController extends Controller
             return $booking;
         });
 
-        $booking->load(['customer', 'package', 'bookingAddons.addon', 'voucher']);
+        $paymentData = $this->initializePakasirPayment($booking, $paymentMode, $paymentMethod, $redirectUrl, $qrisOnly);
+        $booking->load(['customer', 'package', 'bookingAddons.addon', 'voucher', 'payment']);
 
         return response()->json([
             'message' => 'Booking created',
             'data' => $booking,
+            'payment' => $paymentData,
         ], 201);
     }
 
     public function show(string $invoiceNumber): JsonResponse
     {
-        $booking = Booking::with(['customer', 'package', 'bookingAddons.addon', 'voucher'])
+        $booking = Booking::with(['customer', 'package', 'bookingAddons.addon', 'voucher', 'payment'])
             ->where('invoice_number', $invoiceNumber)
             ->first();
 
@@ -687,6 +737,169 @@ class BookingController extends Controller
         } while (Booking::where('invoice_number', $invoice)->exists());
 
         return $invoice;
+    }
+
+    private function initializePakasirPayment(
+        Booking $booking,
+        string $paymentMode,
+        string $paymentMethod,
+        ?string $redirectUrl,
+        bool $qrisOnly
+    ): array {
+        $this->ensurePakasirConfigured();
+
+        $amount = max((int) round((float) $booking->total_price), 0);
+        $service = app(PakasirService::class);
+
+        if ($amount === 0) {
+            $booking->update([
+                'payment_status' => 'paid',
+                'payment_method' => 'free',
+                'payment_reference' => $booking->invoice_number,
+                'payment_expired_at' => null,
+            ]);
+
+            Payment::updateOrCreate(
+                ['booking_id' => $booking->id],
+                [
+                    'method' => 'free',
+                    'amount' => 0,
+                    'transaction_id' => $booking->invoice_number,
+                    'payment_status' => 'completed',
+                    'paid_at' => now(),
+                    'raw_response' => json_encode(['message' => 'No payment required'], JSON_UNESCAPED_UNICODE),
+                ]
+            );
+
+            return [
+                'provider' => 'pakasir',
+                'mode' => 'free',
+                'order_id' => $booking->invoice_number,
+                'amount' => 0,
+                'payment_method' => 'free',
+                'payment_url' => null,
+                'expired_at' => null,
+            ];
+        }
+
+        $fallbackPaymentMethod = $paymentMethod === 'paypal' ? 'paypal' : 'url';
+        $fallbackUrl = $service->buildPaymentUrl($booking->invoice_number, $amount, $redirectUrl, $qrisOnly, $fallbackPaymentMethod);
+
+        if ($paymentMode === 'url') {
+            $booking->update([
+                'payment_method' => 'url',
+                'payment_reference' => $booking->invoice_number,
+            ]);
+
+            Payment::updateOrCreate(
+                ['booking_id' => $booking->id],
+                [
+                    'method' => 'url',
+                    'amount' => $amount,
+                    'transaction_id' => $booking->invoice_number,
+                    'payment_status' => 'pending',
+                    'paid_at' => null,
+                    'raw_response' => json_encode(['payment_url' => $fallbackUrl], JSON_UNESCAPED_UNICODE),
+                ]
+            );
+
+            return [
+                'provider' => 'pakasir',
+                'mode' => 'url',
+                'order_id' => $booking->invoice_number,
+                'amount' => $amount,
+                'payment_method' => 'url',
+                'payment_url' => $fallbackUrl,
+                'expired_at' => optional($booking->payment_expired_at)->toISOString(),
+            ];
+        }
+
+        try {
+            $response = $service->createTransaction($paymentMethod, $booking->invoice_number, $amount);
+            $payment = (array) ($response['payment'] ?? []);
+            $expiredAt = ! empty($payment['expired_at'])
+                ? Carbon::parse((string) $payment['expired_at'])->setTimezone(config('app.timezone'))
+                : now()->addMinutes(30);
+
+            $booking->update([
+                'payment_method' => (string) ($payment['payment_method'] ?? $paymentMethod),
+                'payment_reference' => (string) ($payment['order_id'] ?? $booking->invoice_number),
+                'payment_expired_at' => $expiredAt,
+            ]);
+
+            Payment::updateOrCreate(
+                ['booking_id' => $booking->id],
+                [
+                    'method' => (string) ($payment['payment_method'] ?? $paymentMethod),
+                    'amount' => (float) ($payment['total_payment'] ?? $payment['amount'] ?? $amount),
+                    'transaction_id' => (string) ($payment['order_id'] ?? $booking->invoice_number),
+                    'payment_status' => 'pending',
+                    'paid_at' => null,
+                    'raw_response' => json_encode($response, JSON_UNESCAPED_UNICODE),
+                ]
+            );
+
+            return [
+                'provider' => 'pakasir',
+                'mode' => 'api',
+                'order_id' => (string) ($payment['order_id'] ?? $booking->invoice_number),
+                'amount' => (float) ($payment['amount'] ?? $amount),
+                'fee' => isset($payment['fee']) ? (float) $payment['fee'] : null,
+                'total_payment' => isset($payment['total_payment']) ? (float) $payment['total_payment'] : null,
+                'payment_method' => (string) ($payment['payment_method'] ?? $paymentMethod),
+                'payment_number' => $payment['payment_number'] ?? null,
+                'payment_url' => $fallbackUrl,
+                'expired_at' => $expiredAt->toISOString(),
+            ];
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to create Pakasir API transaction, fallback to payment URL', [
+                'booking_id' => $booking->id,
+                'invoice_number' => $booking->invoice_number,
+                'payment_method' => $paymentMethod,
+                'error' => $exception->getMessage(),
+            ]);
+
+            $booking->update([
+                'payment_method' => $paymentMethod,
+                'payment_reference' => $booking->invoice_number,
+            ]);
+
+            Payment::updateOrCreate(
+                ['booking_id' => $booking->id],
+                [
+                    'method' => $paymentMethod,
+                    'amount' => $amount,
+                    'transaction_id' => $booking->invoice_number,
+                    'payment_status' => 'pending',
+                    'paid_at' => null,
+                    'raw_response' => json_encode([
+                        'fallback' => true,
+                        'error' => $exception->getMessage(),
+                        'payment_url' => $fallbackUrl,
+                    ], JSON_UNESCAPED_UNICODE),
+                ]
+            );
+
+            return [
+                'provider' => 'pakasir',
+                'mode' => 'url_fallback',
+                'order_id' => $booking->invoice_number,
+                'amount' => $amount,
+                'payment_method' => $paymentMethod,
+                'payment_url' => $fallbackUrl,
+                'expired_at' => optional($booking->payment_expired_at)->toISOString(),
+                'warning' => 'Pakasir API unavailable, using payment URL fallback',
+            ];
+        }
+    }
+
+    private function ensurePakasirConfigured(): void
+    {
+        if (empty(config('services.pakasir.project_slug')) || empty(config('services.pakasir.api_key'))) {
+            throw ValidationException::withMessages([
+                'payment' => ['Pakasir configuration is incomplete'],
+            ]);
+        }
     }
 
     private function calculateVoucherDiscount(Voucher $voucher, float $subtotalPrice): float
