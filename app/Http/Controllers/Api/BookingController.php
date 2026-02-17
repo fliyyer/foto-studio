@@ -139,6 +139,7 @@ class BookingController extends Controller
             'status' => ['nullable', 'string'],
             'payment_status' => ['nullable', 'string'],
             'search' => ['nullable', 'string', 'max:100'],
+            'customer_name' => ['nullable', 'string', 'max:100'],
             'booking_date' => ['nullable', 'date_format:Y-m-d'],
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d'],
@@ -197,6 +198,14 @@ class BookingController extends Controller
 
         if (! empty($validated['package_id'])) {
             $query->where('package_id', $validated['package_id']);
+        }
+
+        if (! empty($validated['customer_name'])) {
+            $customerName = trim($validated['customer_name']);
+
+            $query->whereHas('customer', function ($customerQuery) use ($customerName) {
+                $customerQuery->where('name', 'like', '%' . $customerName . '%');
+            });
         }
 
         if (! empty($validated['search'])) {
