@@ -13,13 +13,16 @@ class AdminRoleMiddleware
      *
      * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
      */
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, string ...$roles): Response
     {
         $user = $request->user();
+        $allowedRoles = empty($roles) ? ['admin'] : $roles;
 
-        if (! $user || $user->role !== 'admin') {
+        if (! $user || ! in_array($user->role, $allowedRoles, true)) {
+            $rolesLabel = implode(', ', $allowedRoles);
+
             return response()->json([
-                'message' => 'Forbidden. Admin access only.',
+                'message' => "Forbidden. Allowed roles: {$rolesLabel}.",
             ], 403);
         }
 

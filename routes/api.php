@@ -43,13 +43,13 @@ Route::get('/bookings/{invoiceNumber}/payment-status', [PaymentController::class
 Route::get('/bookings/{invoiceNumber}', [BookingController::class, 'show']);
 Route::get('/vouchers/active', [VoucherController::class, 'activeList']);
 
-Route::middleware(['api.token', 'admin'])->prefix('admin')->group(function () {
-    Route::get('/dashboard', [BookingController::class, 'adminDashboard']);
-    Route::get('/payments/transaction-detail', [PaymentController::class, 'transactionDetail']);
-    Route::get('/payments/history', [PaymentController::class, 'history']);
-    Route::post('/vouchers', [VoucherController::class, 'store']);
-    Route::get('/bookings', [BookingController::class, 'adminIndex']);
-    Route::get('/bookings/{id}', [BookingController::class, 'adminShow']);
-    Route::post('/bookings/{id}/status', [BookingController::class, 'adminUpdateStatus']);
-    Route::post('/bookings/{id}/reschedule', [BookingController::class, 'adminReschedule']);
+Route::middleware('api.token')->prefix('admin')->group(function () {
+    Route::get('/dashboard', [BookingController::class, 'adminDashboard'])->middleware('admin:admin,cashier');
+    Route::get('/payments/transaction-detail', [PaymentController::class, 'transactionDetail'])->middleware('admin');
+    Route::get('/payments/history', [PaymentController::class, 'history'])->middleware('admin:admin,cashier');
+    Route::post('/vouchers', [VoucherController::class, 'store'])->middleware('admin');
+    Route::get('/bookings', [BookingController::class, 'adminIndex'])->middleware('admin:admin,cashier');
+    Route::get('/bookings/{id}', [BookingController::class, 'adminShow'])->middleware('admin');
+    Route::post('/bookings/{id}/status', [BookingController::class, 'adminUpdateStatus'])->middleware('admin:admin,cashier');
+    Route::post('/bookings/{id}/reschedule', [BookingController::class, 'adminReschedule'])->middleware('admin:admin,cashier');
 });
