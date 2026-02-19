@@ -145,6 +145,8 @@ class BookingController extends Controller
             'date_to' => ['nullable', 'date_format:Y-m-d'],
             'studio_id' => ['nullable', 'integer', 'min:1'],
             'package_id' => ['nullable', 'integer', 'min:1'],
+            'studio_name' => ['nullable', 'string', 'max:100'],
+            'package_name' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'sort_by' => ['nullable', 'in:created_at,booking_date,total_price,status,payment_status'],
             'sort_dir' => ['nullable', 'in:asc,desc'],
@@ -200,6 +202,22 @@ class BookingController extends Controller
             $query->where('package_id', $validated['package_id']);
         }
 
+        if (! empty($validated['studio_name'])) {
+            $studioName = trim($validated['studio_name']);
+
+            $query->whereHas('package.studio', function ($studioQuery) use ($studioName) {
+                $studioQuery->where('name', 'like', '%' . $studioName . '%');
+            });
+        }
+
+        if (! empty($validated['package_name'])) {
+            $packageName = trim($validated['package_name']);
+
+            $query->whereHas('package', function ($packageQuery) use ($packageName) {
+                $packageQuery->where('name', 'like', '%' . $packageName . '%');
+            });
+        }
+
         if (! empty($validated['customer_name'])) {
             $customerName = trim($validated['customer_name']);
 
@@ -217,6 +235,12 @@ class BookingController extends Controller
                         $customerQuery->where('name', 'like', '%' . $search . '%')
                             ->orWhere('phone', 'like', '%' . $search . '%')
                             ->orWhere('email', 'like', '%' . $search . '%');
+                    })
+                    ->orWhereHas('package', function ($packageQuery) use ($search) {
+                        $packageQuery->where('name', 'like', '%' . $search . '%')
+                            ->orWhereHas('studio', function ($studioQuery) use ($search) {
+                                $studioQuery->where('name', 'like', '%' . $search . '%');
+                            });
                     });
             });
         }
