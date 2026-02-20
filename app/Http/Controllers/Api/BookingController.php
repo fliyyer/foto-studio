@@ -148,7 +148,7 @@ class BookingController extends Controller
             'studio_name' => ['nullable', 'string', 'max:100'],
             'package_name' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
-            'sort_by' => ['nullable', 'in:created_at,booking_date,total_price,status,payment_status'],
+            'sort_by' => ['nullable', 'in:created_at,booking_date,start_time,total_price,status,payment_status'],
             'sort_dir' => ['nullable', 'in:asc,desc'],
         ]);
 
