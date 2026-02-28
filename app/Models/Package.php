@@ -20,11 +20,13 @@ class Package extends Model
         'max_booking_per_slot',
         'description',
         'max_person',
+        'print_photo',
         'is_active',
     ];
 
     protected $casts = [
         'background' => 'array',
+        'print_photo' => 'integer',
         'is_active' => 'boolean',
     ];
 

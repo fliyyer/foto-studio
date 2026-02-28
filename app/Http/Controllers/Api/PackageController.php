@@ -51,6 +51,7 @@ class PackageController extends Controller
             'max_booking_per_slot' => ['required', 'integer', 'min:1'],
             'description' => ['required', 'string'],
             'max_person' => ['required', 'integer', 'min:1'],
+            'print_photo' => ['nullable', 'integer', 'min:0'],
             'is_active' => ['nullable', 'boolean'],
         ]);
 
@@ -122,6 +123,7 @@ class PackageController extends Controller
             'max_booking_per_slot' => ['sometimes', 'required', 'integer', 'min:1'],
             'description' => ['sometimes', 'required', 'string'],
             'max_person' => ['sometimes', 'required', 'integer', 'min:1'],
+            'print_photo' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'is_active' => ['sometimes', 'nullable', 'boolean'],
         ]);
 

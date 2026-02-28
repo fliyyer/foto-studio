@@ -40,6 +40,7 @@ class BookingController extends Controller
         $validated = $request->validate([
             'month' => ['nullable', 'integer', 'min:1', 'max:12'],
             'year' => ['nullable', 'integer', 'min:2000', 'max:2100'],
+            'studio_id' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $now = now();
@@ -50,16 +51,66 @@ class BookingController extends Controller
         $startMonth = Carbon::create($year, $month, 1)->startOfMonth();
         $endMonth = $startMonth->copy()->endOfMonth();
 
-        $totalBookingToday = Booking::whereDate('booking_date', $today)->count();
-        $totalBookingMonth = Booking::whereBetween('booking_date', [$startMonth->toDateString(), $endMonth->toDateString()])->count();
+        $applyStudioFilter = function ($query) use ($validated): void {
+            if (! empty($validated['studio_id'])) {
+                $query->whereHas('package', function ($packageQuery) use ($validated): void {
+                    $packageQuery->where('studio_id', $validated['studio_id']);
+                });
+            }
+        };
 
-        $totalRevenueToday = (float) Booking::whereDate('booking_date', $today)
-            ->where('payment_status', 'paid')
+        $totalBookingTodayQuery = Booking::query()
+            ->whereDate('booking_date', $today);
+        $applyStudioFilter($totalBookingTodayQuery);
+        $totalBookingToday = $totalBookingTodayQuery->count();
+
+        $totalBookingMonthQuery = Booking::query()
+            ->whereBetween('booking_date', [$startMonth->toDateString(), $endMonth->toDateString()]);
+        $applyStudioFilter($totalBookingMonthQuery);
+        $totalBookingMonth = $totalBookingMonthQuery->count();
+
+        $totalRevenueTodayQuery = Booking::query()
+            ->whereDate('booking_date', $today)
+            ->where('payment_status', 'paid');
+        $applyStudioFilter($totalRevenueTodayQuery);
+        $totalRevenueToday = (float) $totalRevenueTodayQuery
             ->sum('total_price');
 
-        $totalRevenueMonth = (float) Booking::whereBetween('booking_date', [$startMonth->toDateString(), $endMonth->toDateString()])
+        $totalRevenueMonthQuery = Booking::query()
+            ->whereBetween('booking_date', [$startMonth->toDateString(), $endMonth->toDateString()])
             ->where('payment_status', 'paid')
-            ->sum('total_price');
+        ;
+        $applyStudioFilter($totalRevenueMonthQuery);
+        $totalRevenueMonth = (float) $totalRevenueMonthQuery->sum('total_price');
+
+        $topProductsRawQuery = Booking::query()
+            ->select('package_id')
+            ->selectRaw('COUNT(*) as total_bookings')
+            ->selectRaw('SUM(total_price) as total_amount')
+            ->whereBetween('booking_date', [$startMonth->toDateString(), $endMonth->toDateString()])
+            ->where('payment_status', 'paid')
+            ->whereNotNull('package_id')
+            ->groupBy('package_id')
+            ->with('package:id,name')
+            ->orderByDesc('total_amount');
+        $applyStudioFilter($topProductsRawQuery);
+        $topProductsRaw = $topProductsRawQuery->get();
+
+        $topProductsTotalAmount = (float) $topProductsRaw->sum('total_amount');
+        $topProducts = $topProductsRaw->map(function (Booking $item) use ($topProductsTotalAmount): array {
+            $amount = (float) $item->total_amount;
+            $percentage = $topProductsTotalAmount > 0
+                ? round(($amount / $topProductsTotalAmount) * 100, 2)
+                : 0.0;
+
+            return [
+                'package_id' => (int) $item->package_id,
+                'package_name' => $item->package?->name ?? 'Unknown package',
+                'total_bookings' => (int) $item->total_bookings,
+                'total_amount' => $amount,
+                'percentage' => $percentage,
+            ];
+        })->values();
 
         return response()->json([
             'message' => 'Admin dashboard summary',
@@ -70,6 +121,9 @@ class BookingController extends Controller
                 'total_revenue_month' => $totalRevenueMonth,
                 'month' => $month,
                 'year' => $year,
+                'studio_id' => $validated['studio_id'] ?? null,
+                'top_products_total_amount' => $topProductsTotalAmount,
+                'top_products' => $topProducts,
             ],
         ]);
     }
